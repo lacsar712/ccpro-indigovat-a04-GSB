@@ -100,6 +100,39 @@
     .user-pill button:hover {
       background: rgba(216, 235, 232, 0.12);
     }
+    .topnav {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+    }
+    .topnav a {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.3rem 0.8rem;
+      border: 1px solid rgba(216, 235, 232, 0.4);
+      border-radius: 999px;
+      color: var(--foam);
+      text-decoration: none;
+      font-size: 0.85rem;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .topnav a:hover { background: rgba(216, 235, 232, 0.12); }
+    .topnav a.on {
+      background: linear-gradient(135deg, rgba(61, 139, 156, 0.85), rgba(31, 77, 107, 0.95));
+      border-color: rgba(216, 235, 232, 0.65);
+    }
+    .nav-badge {
+      min-width: 1.15rem;
+      padding: 0 0.35rem;
+      border-radius: 999px;
+      background: #d98a3d;
+      color: #1a1206;
+      font-size: 0.72rem;
+      font-weight: 700;
+      line-height: 1.35;
+      text-align: center;
+    }
     .chips {
       display: flex;
       flex-wrap: wrap;
@@ -172,6 +205,18 @@
       letter-spacing: 0.06em;
       font-size: 1.05rem;
     }
+    .vat-tag {
+      position: absolute;
+      top: 0.45rem;
+      right: 0.45rem;
+      padding: 0.08rem 0.42rem;
+      border-radius: 999px;
+      background: #d98a3d;
+      color: #1a1206;
+      font-size: 0.68rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+    }
     .vat-card .meta {
       font-size: 0.75rem;
       opacity: 0.78;
@@ -213,6 +258,24 @@
       color: var(--indigo-deep);
     }
     .panel .hint { color: #4a6670; font-size: 0.88rem; margin: 0 0 1rem; }
+    .retain-hint {
+      font-size: 0.85rem;
+      padding: 0.55rem 0.8rem;
+      border-radius: 10px;
+      margin: 0 0 1rem;
+      border: 1px solid transparent;
+    }
+    .retain-hint.ok {
+      background: #e4f2ea;
+      border-color: #9fd4b8;
+      color: #175c40;
+    }
+    .retain-hint.missing {
+      background: #fdf0e2;
+      border-color: #e7c08e;
+      color: #8a5320;
+    }
+    .retain-hint a { color: inherit; font-weight: 600; }
     .panel-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -292,6 +355,13 @@
         <p class="sub">IndigoVat · 按缸位盯氧化还原，点开记浸染与改状态</p>
       </div>
       <div class="user-pill">
+        <nav class="topnav" aria-label="主导航">
+          <a href="/" class="{{ 'on' if active == 'bay' }}">还原台</a>
+          <a href="/retains" class="{{ 'on' if active == 'retains' }}">
+            布样留底
+            {% if open_count is defined and open_count %}<span class="nav-badge">{{ open_count }}</span>{% endif %}
+          </a>
+        </nav>
         <span>{{ user.username }}</span>
         <form method="post" action="/logout">
           <button type="submit">退出</button>

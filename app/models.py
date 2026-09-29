@@ -6,10 +6,12 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    Index,
     Numeric,
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -55,6 +57,7 @@ class Vat(Base):
 
     workshop: Mapped["Workshop"] = relationship(back_populates="vats")
     lots: Mapped[list["DipLot"]] = relationship(back_populates="vat")
+    retains: Mapped[list["ClothRetain"]] = relationship(back_populates="vat")
 
     def latest_lot(self) -> Optional["DipLot"]:
         if not self.lots:
@@ -72,3 +75,33 @@ class DipLot(Base):
     redoxMv: Mapped[Optional[Decimal]] = mapped_column(Numeric(8, 2), nullable=True)
 
     vat: Mapped["Vat"] = relationship(back_populates="lots")
+
+
+class ClothRetain(Base):
+    """布样留底：可染色缸登记新浸染前须先留一条未销号记录。"""
+
+    __tablename__ = "cloth_retains"
+    __table_args__ = (
+        # 同一染缸同时只能有一条未销号；用部分唯一索引兜底并发（DB 层拒第二笔）。
+        Index(
+            "uniq_open_retain_per_vat",
+            "vat_id",
+            unique=True,
+            postgresql_where=text("reconciled = false"),
+            sqlite_where=text("reconciled = 0"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    vat_id: Mapped[int] = mapped_column(ForeignKey("vats.id", ondelete="CASCADE"))
+    sampleMeters: Mapped[Decimal] = mapped_column(Numeric(6, 2))
+    retainedAt: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    binCode: Mapped[str] = mapped_column(String(40))
+    reconciled: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    reconciledAt: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    registeredBy: Mapped[int] = mapped_column(ForeignKey("users.id"))
+
+    vat: Mapped["Vat"] = relationship(back_populates="retains")
+    registrar: Mapped["User"] = relationship(foreign_keys=[registeredBy])

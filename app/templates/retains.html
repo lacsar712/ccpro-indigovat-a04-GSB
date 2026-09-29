@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+{% block title %}布样留底{% endblock %}
+{% block content %}
+<style>
+  .scope-bar { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 1rem; flex-wrap: wrap; }
+  .scope-bar a {
+    padding: 0.32rem 0.9rem;
+    border-radius: 999px;
+    border: 1px solid rgba(216,235,232,0.4);
+    color: var(--foam);
+    text-decoration: none;
+    font-size: 0.86rem;
+  }
+  .scope-bar a.on {
+    background: linear-gradient(135deg, rgba(61,139,156,0.85), rgba(31,77,107,0.95));
+    border-color: rgba(216,235,232,0.65);
+  }
+  .scope-bar .count-pill { color: var(--foam); font-size: 0.86rem; opacity: 0.85; }
+  .retain-grid { display: grid; grid-template-columns: 1fr 1.6fr; gap: 1.25rem; }
+  @media (max-width: 860px) { .retain-grid { grid-template-columns: 1fr; } }
+  .retain-table { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
+  .retain-table th, .retain-table td {
+    padding: 0.55rem 0.5rem;
+    border-bottom: 1px dashed #c5d8d6;
+    text-align: left;
+    vertical-align: top;
+  }
+  .retain-table th { color: #1f4d6b; font-size: 0.8rem; white-space: nowrap; }
+  .pill-open {
+    display: inline-block;
+    padding: 0.05rem 0.5rem;
+    border-radius: 999px;
+    background: #fbe6cd;
+    color: #8a5320;
+    font-size: 0.74rem;
+    font-weight: 700;
+  }
+  .pill-done {
+    display: inline-block;
+    padding: 0.05rem 0.5rem;
+    border-radius: 999px;
+    color: #35654d;
+    background: #e2f0e8;
+    font-size: 0.74rem;
+  }
+  .mini-form { display: flex; gap: 0.4rem; flex-wrap: wrap; align-items: center; }
+  .mini-form input, .mini-form select {
+    padding: 0.28rem 0.45rem;
+    margin: 0;
+    font-size: 0.82rem;
+  }
+  .mini-form button { width: auto; margin: 0; padding: 0.32rem 0.7rem; font-size: 0.8rem; }
+  .btn-warn {
+    background: #b4632a !important;
+    border-color: #b4632a !important;
+  }
+  .btn-warn:hover { background: #94501f !important; }
+  .muted-note { color: #5c7480; font-size: 0.8rem; margin: 0.3rem 0 0; }
+  .rule-line { color: var(--foam); opacity: 0.75; font-size: 0.84rem; margin-top: 1.1rem; }
+  .role-note { font-size: 0.76rem; color: #8a5320; margin-top: 0.25rem; }
+</style>
+
+{% if error %}
+<div class="error-box">{{ error }}</div>
+{% endif %}
+
+<div class="scope-bar">
+  <a href="/retains?scope=open" class="{{ 'on' if scope == 'open' }}">仅未销号</a>
+  <a href="/retains?scope=all" class="{{ 'on' if scope == 'all' }}">全部记录</a>
+  <span class="count-pill">未销号 <strong>{{ open_count }}</strong> 笔（与还原台缸位条「待销」标记对账）</span>
+</div>
+
+<div class="retain-grid">
+  <div class="panel">
+    <h2>新留布样</h2>
+    <p class="hint">可染色缸登记新浸染前，须先在此留一条未销号记录。</p>
+    <form method="post" action="/retains">
+      <input type="hidden" name="scope" value="{{ scope }}">
+      <label>染缸
+        <select name="vat_id" required>
+          {% for v in vats %}
+          <option value="{{ v.id }}">{{ v.code }} · {{ v.workshopName }} · {{ v.statusLabel }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>留样米数（正数，最多 2 米）
+        <input type="number" name="sampleMeters" step="0.01" min="0.01" max="2" required placeholder="例如 1.5">
+      </label>
+      <label>留样时刻
+        <input type="datetime-local" name="retainedAt" required>
+      </label>
+      <label>柜格代号
+        <input type="text" name="binCode" maxlength="40" required placeholder="例如 甲-三-07">
+      </label>
+      <button type="submit">登记留底</button>
+    </form>
+    <p class="muted-note">登记人：{{ user.username }}。同一染缸同时只能有一条未销号；两人并发登记时只入一笔，另一笔会被中文拒绝。</p>
+  </div>
+
+  <div class="panel">
+    <h2>{{ '未销号留底' if scope == 'open' else '留底专页（全部）' }}</h2>
+    <table class="retain-table">
+      <thead>
+        <tr>
+          <th>状态</th><th>染缸</th><th>留样米数</th><th>留样时刻</th>
+          <th>柜格代号</th><th>登记人</th><th>操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in retains %}
+        <tr>
+          <td>
+            {% if r.reconciled %}
+            <span class="pill-done">已销号</span>
+            <div class="muted-note">{{ r.reconciledAt }}</div>
+            {% else %}
+            <span class="pill-open">未销号</span>
+            {% endif %}
+          </td>
+          <td>{{ r.vatCode }}<div class="muted-note">{{ r.workshopName }} · {{ r.vatStatus }}</div></td>
+          <td>{{ r.sampleMeters }} m</td>
+          <td>{{ r.retainedAtLabel }}</td>
+          <td>{{ r.binCode }}</td>
+          <td>{{ r.registrar }}</td>
+          <td>
+            {% if not r.reconciled %}
+            <form class="mini-form" method="post" action="/retains/{{ r.id }}/update">
+              <input type="hidden" name="scope" value="{{ scope }}">
+              <input type="number" name="sampleMeters" step="0.01" min="0.01" max="2" required value="{{ r.sampleMeters }}" aria-label="留样米数" style="width:5.2rem">
+              <input type="datetime-local" name="retainedAt" required value="{{ r.retainedAt }}" aria-label="留样时刻">
+              <input type="text" name="binCode" maxlength="40" required value="{{ r.binCode }}" aria-label="柜格代号" style="width:7rem">
+              <button type="submit">保存</button>
+            </form>
+            <form class="mini-form" method="post" action="/retains/{{ r.id }}/reconcile" style="margin-top:0.35rem">
+              <input type="hidden" name="scope" value="{{ scope }}">
+              <button type="submit" class="btn-warn">销号</button>
+            </form>
+            {% if not is_superuser %}
+            <p class="role-note">销号仅主管可做，染缸工点销号会被拒绝（不会退出登录）。</p>
+            {% endif %}
+            {% else %}
+            <span class="muted-note">—</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+        {% if not retains %}
+        <tr><td colspan="7" class="muted-note" style="text-align:center;padding:1rem 0">暂无未销号留底。</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<p class="rule-line">
+  规则：留样米数须为正且 ≤ 2 米；同一染缸同时仅一条未销号（并发双开只入一笔，另一笔中文拒单且本页/还原台照常可开）；
+  未销号留底自留样时刻起 12 小时内有效，逾期或无留底时，还原台登记浸染会被中文拒绝。
+</p>
+
+<script>
+  document.querySelectorAll('input[type="datetime-local"][name="retainedAt"]').forEach(function (el) {
+    if (el.value) return;
+    var d = new Date();
+    d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+    el.value = d.toISOString().slice(0, 16);
+  });
+</script>
+{% endblock %}

@@ -11,8 +11,8 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.auth import get_current_user
 from app.db import get_db
-from app.models import DipLot, Vat, Workshop
-from app.services.vat_rules import VatRuleError, validate_vat_status_change
+from app.models import ClothRetain, DipLot, Vat, Workshop
+from app.services.vat_rules import VatRuleError, validate_dip_recording, validate_vat_status_change
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
@@ -56,7 +56,7 @@ def _spark_points(lots: list[DipLot], width: int = 72, height: int = 28) -> list
     return pts
 
 
-def _vat_payload(vat: Vat) -> dict:
+def _vat_payload(vat: Vat, open_retain: Optional[ClothRetain] = None) -> dict:
     lots = sorted(vat.lots, key=lambda x: (x.dippedAt, x.id))
     chronological = lots
     latest = lots[-1] if lots else None
@@ -74,6 +74,18 @@ def _vat_payload(vat: Vat) -> dict:
         "lastMeters": float(latest.clothMeters) if latest else None,
         "lastDippedAt": latest.dippedAt.strftime("%Y-%m-%d %H:%M") if latest else None,
         "spark": _spark_points(chronological),
+        # 待销标记与布样留底专页未销号记录同源对账
+        "hasOpenRetain": open_retain is not None,
+        "openRetain": (
+            {
+                "id": open_retain.id,
+                "sampleMeters": float(open_retain.sampleMeters),
+                "retainedAt": open_retain.retainedAt.strftime("%Y-%m-%d %H:%M"),
+                "binCode": open_retain.binCode,
+            }
+            if open_retain
+            else None
+        ),
         "recentLots": [
             {
                 "id": l.id,
@@ -102,11 +114,20 @@ def _bay_context(
         .order_by(Vat.code)
         .all()
     )
+    open_retains = (
+        db.query(ClothRetain)
+        .filter(ClothRetain.reconciled.is_(False))
+        .all()
+    )
+    open_by_vat: dict[int, ClothRetain] = {}
+    for r in open_retains:
+        open_by_vat.setdefault(r.vat_id, r)
     return {
         "request": request,
         "user": user,
         "workshops": [{"id": w.id, "name": w.name, "region": w.region} for w in workshops],
-        "vats": [_vat_payload(v) for v in vats],
+        "vats": [_vat_payload(v, open_by_vat.get(v.id)) for v in vats],
+        "open_count": len(open_retains),
         "filter_workshop": workshop_id,
         "selected_vat": selected_vat,
         "error": error,
@@ -185,6 +206,8 @@ async def bay_log_lot(
         return RedirectResponse("/", status_code=303)
     error = None
     try:
+        # 与留底专页共用同一规则函数：展开区不另写放行
+        validate_dip_recording(db, pk)
         lot = DipLot(
             vat_id=pk,
             dippedAt=datetime.fromisoformat(dippedAt),
@@ -196,6 +219,9 @@ async def bay_log_lot(
         return RedirectResponse(f"/?vat={pk}" + (f"&workshop={ws}" if ws else ""), status_code=303)
     except (ValueError, InvalidOperation) as exc:
         error = f"浸染记录无效：{exc}"
+        db.rollback()
+    except VatRuleError as exc:
+        error = exc.message
         db.rollback()
     return render(
         request,

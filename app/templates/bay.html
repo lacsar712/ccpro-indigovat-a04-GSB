@@ -31,6 +31,11 @@
         role="listitem"
         @click="toggle(v.id)"
       >
+        <span
+          x-show="v.hasOpenRetain"
+          class="vat-tag"
+          title="存在未销号布样留底"
+        >待销</span>
         <div class="code" x-text="v.code"></div>
         <div class="meta" x-text="v.workshopName + ' · ' + v.dyeType"></div>
         <div class="status-label">
@@ -79,6 +84,22 @@
         <p class="hint">当前 <strong x-text="selected().statusLabel"></strong>
           · 最近浸染 <span x-text="selected().lastDippedAt || '—'"></span>
           · 设为可染色须最新批次电位 ≤ -500 mV</p>
+
+        <div class="retain-hint" :class="selected().hasOpenRetain ? 'ok' : 'missing'">
+          <template x-if="selected().hasOpenRetain">
+            <span>布样留底待销：留样
+              <strong x-text="selected().openRetain.sampleMeters + ' 米'"></strong>
+              · <span x-text="selected().openRetain.retainedAt"></span>
+              · 柜格 <span x-text="selected().openRetain.binCode"></span>
+              （12 小时内可登记浸染，销号到
+              <a href="/retains">布样留底专页</a>）
+            </span>
+          </template>
+          <template x-if="!selected().hasOpenRetain">
+            <span>本缸没有未销号布样留底：登记新浸染会被拒绝，请先到
+              <a href="/retains">布样留底专页</a> 留底（留样后 12 小时内有效）。</span>
+          </template>
+        </div>
 
         <div class="panel-grid">
           <div>
