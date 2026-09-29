@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Optional
 import json
@@ -11,8 +11,15 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.auth import get_current_user
 from app.db import get_db
-from app.models import DipLot, Vat, Workshop
-from app.services.vat_rules import VatRuleError, validate_vat_status_change
+from app.models import ClothRetain, DipLot, Vat, Workshop
+from app.services.vat_rules import (
+    RETAIN_FRESH_HOURS,
+    VatRuleError,
+    ensure_utc,
+    find_open_retain,
+    open_retain_for_dip,
+    validate_vat_status_change,
+)
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
@@ -56,11 +63,16 @@ def _spark_points(lots: list[DipLot], width: int = 72, height: int = 28) -> list
     return pts
 
 
-def _vat_payload(vat: Vat) -> dict:
+def _vat_payload(vat: Vat, now: datetime) -> dict:
     lots = sorted(vat.lots, key=lambda x: (x.dippedAt, x.id))
     chronological = lots
     latest = lots[-1] if lots else None
     recent = list(reversed(lots[-8:]))  # 展开区展示近几笔
+    open_retain = next((r for r in vat.retains if not r.voided), None)
+    retain_fresh = False
+    if open_retain is not None:
+        retained_at = ensure_utc(open_retain.retainedAt)
+        retain_fresh = timedelta(0) <= now - retained_at <= timedelta(hours=RETAIN_FRESH_HOURS)
     return {
         "id": vat.id,
         "code": vat.code,
@@ -73,6 +85,9 @@ def _vat_payload(vat: Vat) -> dict:
         "lastRedox": float(latest.redoxMv) if latest and latest.redoxMv is not None else None,
         "lastMeters": float(latest.clothMeters) if latest else None,
         "lastDippedAt": latest.dippedAt.strftime("%Y-%m-%d %H:%M") if latest else None,
+        "hasOpenRetain": open_retain is not None,
+        "retainAt": open_retain.retainedAt.strftime("%Y-%m-%d %H:%M") if open_retain else None,
+        "retainFresh": retain_fresh,
         "spark": _spark_points(chronological),
         "recentLots": [
             {
@@ -96,21 +111,29 @@ def _bay_context(
 ):
     # 始终下发全部缸位；工坊仅作前端 chip 筛选，避免切回「全部」时缺数据
     workshops = db.query(Workshop).order_by(Workshop.name).all()
+    now = datetime.now(timezone.utc)
     vats = (
         db.query(Vat)
-        .options(joinedload(Vat.workshop), joinedload(Vat.lots))
+        .options(
+            joinedload(Vat.workshop),
+            joinedload(Vat.lots),
+            joinedload(Vat.retains),
+        )
         .order_by(Vat.code)
         .all()
     )
+    vat_payloads = [_vat_payload(v, now) for v in vats]
+    open_retain_count = sum(1 for p in vat_payloads if p["hasOpenRetain"])
     return {
         "request": request,
         "user": user,
         "workshops": [{"id": w.id, "name": w.name, "region": w.region} for w in workshops],
-        "vats": [_vat_payload(v) for v in vats],
+        "vats": vat_payloads,
         "filter_workshop": workshop_id,
         "selected_vat": selected_vat,
         "error": error,
         "status_labels": STATUS_LABELS,
+        "open_retain_count": open_retain_count,
         "active": "bay",
     }
 
@@ -141,7 +164,11 @@ async def bay_vat_status(
         return RedirectResponse("/login", status_code=303)
     item = (
         db.query(Vat)
-        .options(joinedload(Vat.workshop), joinedload(Vat.lots))
+        .options(
+            joinedload(Vat.workshop),
+            joinedload(Vat.lots),
+            joinedload(Vat.retains),
+        )
         .filter(Vat.id == pk)
         .first()
     )
@@ -185,15 +212,26 @@ async def bay_log_lot(
         return RedirectResponse("/", status_code=303)
     error = None
     try:
+        dipped_at = ensure_utc(datetime.fromisoformat(dippedAt))
+        cloth_meters = Decimal(clothMeters)
+        if cloth_meters <= 0:
+            raise VatRuleError("浸染布料米数须为正数。")
+        redox = Decimal(redoxMv) if redoxMv.strip() else None
+        # 留底有效性与本入口共用同一校验函数：须有未销号留底且留样时刻在 12 小时内
+        open_retain = find_open_retain(db, pk)
+        open_retain_for_dip(open_retain, dipped_at)
         lot = DipLot(
             vat_id=pk,
-            dippedAt=datetime.fromisoformat(dippedAt),
-            clothMeters=Decimal(clothMeters),
-            redoxMv=Decimal(redoxMv) if redoxMv.strip() else None,
+            dippedAt=dipped_at,
+            clothMeters=cloth_meters,
+            redoxMv=redox,
         )
         db.add(lot)
         db.commit()
         return RedirectResponse(f"/?vat={pk}" + (f"&workshop={ws}" if ws else ""), status_code=303)
+    except VatRuleError as exc:
+        error = exc.message
+        db.rollback()
     except (ValueError, InvalidOperation) as exc:
         error = f"浸染记录无效：{exc}"
         db.rollback()

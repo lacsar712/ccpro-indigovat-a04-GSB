@@ -1,0 +1,198 @@
+{% extends "base.html" %}
+{% block title %}布样留底簿{% endblock %}
+{% block content %}
+<style>
+  .retain-wrap { display: grid; grid-template-columns: 360px 1fr; gap: 1.25rem; align-items: start; }
+  @media (max-width: 860px) { .retain-wrap { grid-template-columns: 1fr; } }
+  .retain-table { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
+  .retain-table th, .retain-table td {
+    padding: 0.55rem 0.5rem;
+    border-bottom: 1px dashed #c5d8d6;
+    text-align: left;
+    vertical-align: top;
+  }
+  .retain-table th { color: #1f4d6b; font-weight: 650; white-space: nowrap; }
+  .tag-open {
+    display: inline-block;
+    padding: 0.1rem 0.55rem;
+    border-radius: 999px;
+    background: #fbe7c6;
+    color: #8a5a12;
+    font-size: 0.76rem;
+    font-weight: 650;
+    white-space: nowrap;
+  }
+  .tag-voided {
+    display: inline-block;
+    padding: 0.1rem 0.55rem;
+    border-radius: 999px;
+    background: #dfe7e6;
+    color: #5d7271;
+    font-size: 0.76rem;
+    white-space: nowrap;
+  }
+  .row-form { margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px dashed #c5d8d6; }
+  .row-form .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+  .mini-btn {
+    width: auto !important;
+    padding: 0.28rem 0.8rem !important;
+    font-size: 0.8rem !important;
+    margin: 0.15rem 0 0 !important;
+  }
+  .mini-btn.void { background: #8a5a12 !important; border-color: #8a5a12 !important; }
+  .mini-btn.danger { background: #94484a !important; border-color: #94484a !important; }
+  .muted-note { color: #4a6670; font-size: 0.82rem; margin: 0.4rem 0 0; }
+  .filter-bar { display: flex; gap: 0.5rem; margin-bottom: 1rem; align-items: center; }
+  .filter-bar a {
+    padding: 0.35rem 0.9rem;
+    border-radius: 999px;
+    border: 1px solid rgba(31, 77, 107, 0.35);
+    text-decoration: none;
+    font-size: 0.85rem;
+    color: var(--indigo-mid);
+  }
+  .filter-bar a.on { background: var(--indigo-mid); color: #fff; border-color: var(--indigo-mid); }
+  .empty-note { color: #6b7c85; padding: 1.2rem 0.2rem; text-align: center; font-size: 0.9rem; }
+  .new-form button[type="submit"] { margin-top: 0.4rem; }
+</style>
+
+<div class="filter-bar">
+  <a href="/retains?show=open" class="{% if show_open %}on{% endif %}">未销号</a>
+  <a href="/retains?show=all" class="{% if not show_open %}on{% endif %}">全部留底</a>
+  <span class="muted-note">当前未销号：<strong>{{ open_retain_count }}</strong> 条（与还原台缸位条待销标记同源对账）</span>
+</div>
+
+{% if error %}
+<div class="error-box">{{ error }}</div>
+{% endif %}
+
+<div class="retain-wrap">
+  <div class="panel new-form">
+    <h2>新建布样留底</h2>
+    <p class="hint">留底后 12 小时内，本缸方可登记新浸染；同一染缸同时只能有一条未销号。</p>
+    <form method="post" action="/retains">
+      <label>染缸
+        <select name="vat_id" required>
+          <option value="" disabled {% if not form.vat_id %}selected{% endif %}>请选择染缸</option>
+          {% for v in vat_choices %}
+          <option value="{{ v.id }}" {% if form.vat_id == v.id|string %}selected{% endif %}>
+            {{ v.code }} · {{ v.workshopName }} · {{ v.dyeType }}
+          </option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>留样米数（须为正，上限 2 米）
+        <input type="number" name="clothMeters" step="0.01" min="0.01" max="2" required
+               value="{{ form.clothMeters or '' }}" placeholder="例如 1.5">
+      </label>
+      <label>留样时刻
+        <input type="datetime-local" name="retainedAt" class="js-now" required
+               value="{{ form.retainedAt or '' }}">
+      </label>
+      <label>柜格代号
+        <input type="text" name="lockerCode" maxlength="40" required
+               value="{{ form.lockerCode or '' }}" placeholder="例如 甲-三-12">
+      </label>
+      <button type="submit">登记留底</button>
+    </form>
+    <p class="muted-note">
+      规则：留样米数 0 &lt; x ≤ 2；未销号留底有效期 12 小时；
+      两人几乎同时为同一缸登记时只入库一笔，另一笔会被中文拒绝。
+    </p>
+    <p class="muted-note">
+      销号权限：仅主管可销号；染缸工点击销号将被拒绝，登录会话不会被清除。
+    </p>
+  </div>
+
+  <div class="panel" x-data="{ editing: null }">
+    <h2>{{ "未销号留底" if show_open else "全部留底（含已销号）" }}</h2>
+    {% if records %}
+    <div style="overflow-x:auto">
+      <table class="retain-table">
+        <thead>
+          <tr>
+            <th>染缸</th>
+            <th>留样米数</th>
+            <th>留样时刻</th>
+            <th>柜格代号</th>
+            <th>是否已销号</th>
+            <th>登记人</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in records %}
+          <tr>
+            <td><strong>{{ r.vatCode }}</strong><br><span class="muted-note">{{ r.workshopName }}</span></td>
+            <td>{{ r.clothMeters }} m</td>
+            <td>{{ r.retainedAt }}</td>
+            <td>{{ r.lockerCode }}</td>
+            <td>
+              {% if r.voided %}
+              <span class="tag-voided">已销号</span>
+              <div class="muted-note">
+                {% if r.voidedAt %}{{ r.voidedAt }}{% endif %}
+                {% if r.voider %} · {{ r.voider }}{% endif %}
+              </div>
+              {% else %}
+              <span class="tag-open">待销号</span>
+              {% endif %}
+            </td>
+            <td>{{ r.registrar }}</td>
+            <td style="white-space:nowrap">
+              {% if not r.voided %}
+              <button type="button" class="mini-btn"
+                      @click="editing = (editing === {{ r.id }} ? null : {{ r.id }})">修改</button>
+              <form method="post" action="/retains/{{ r.id }}/void" style="display:inline"
+                    title="{% if not is_supervisor %}销号仅主管可操作，染缸工提交将被拒绝且不会退出登录{% else %}主管销号{% endif %}">
+                <button type="submit" class="mini-btn void">销号</button>
+              </form>
+              <div class="row-form" x-show="editing === {{ r.id }}" x-cloak>
+                <form method="post" action="/retains/{{ r.id }}/update">
+                  <label class="muted-note">留样米数（0 &lt; x ≤ 2）
+                    <input type="number" name="clothMeters" step="0.01" min="0.01" max="2"
+                           required value="{{ r.clothMeters }}">
+                  </label>
+                  <div class="grid2">
+                    <label class="muted-note">留样时刻
+                      <input type="datetime-local" name="retainedAt" required
+                             value="{{ r.retainedAt.replace(' ', 'T') }}">
+                    </label>
+                    <label class="muted-note">柜格代号
+                      <input type="text" name="lockerCode" maxlength="40" required
+                             value="{{ r.lockerCode }}">
+                    </label>
+                  </div>
+                  <button type="submit" class="mini-btn">保存修改</button>
+                </form>
+              </div>
+              {% else %}
+              <span class="muted-note">—</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="empty-note">
+      {% if show_open %}当前没有未销号留底。{% else %}暂无任何留底记录。{% endif %}
+    </p>
+    {% endif %}
+  </div>
+</div>
+
+<p class="rule-foot">
+  布样留底与浸染保存共用同一校验：无未销号留底、或留样时刻超过 12 小时，浸染登记将被中文拒绝。
+</p>
+
+<script>
+  document.querySelectorAll('.js-now').forEach(function (el) {
+    if (el.value) return;
+    var d = new Date();
+    d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+    el.value = d.toISOString().slice(0, 16);
+  });
+</script>
+{% endblock %}
